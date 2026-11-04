@@ -1,13 +1,11 @@
-import os
-import urllib.request
 import numpy as np
 from PIL import Image
 import streamlit as st
-import torch
+from ultralytics import YOLO
 
 # Configuración de la página
 st.set_page_config(
-    page_title="YOLOv5 Streamlit App",
+    page_title="YOLOv8 Streamlit App",
     page_icon="📷",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -30,75 +28,68 @@ max_detections = st.sidebar.slider(
 )
 
 
-# Cargar modelo de forma robusta descargando los pesos directamente
+# Cargar modelo de forma limpia con Ultralytics
 @st.cache_resource
-def load_yolov5_model():
-  weight_file = "yolov5s.pt"
-  if not os.path.exists(weight_file):
-    url = "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
-    urllib.request.urlretrieve(url, weight_file)
-
-  # Cargar el modelo localmente con torch.hub apuntando al directorio actual
-  model = torch.hub.load(
-      "ultralytics/yolov5",
-      "custom",
-      path=weight_file,
-      source="github",
-      force_reload=False,
-  )
+def load_yolo_model():
+  # Utiliza yolov8n (nano) que es ligero, rápido y descarga sin problemas en Streamlit
+  model = YOLO("yolov8n.pt")
   return model
 
 
-with st.spinner(
-    "Cargando modelo YOLOv5 y pesos, por favor espera un momento..."
-):
-  model = load_yolov5_model()
+with st.spinner("Cargando modelo de detección... por favor espera."):
+  model = load_yolo_model()
 
 # --- CONTENIDO PRINCIPAL ---
-st.write(
-    "Esta aplicación utiliza YOLOv5 para detectar objetos en imágenes"
-    " capturadas con tu cámara."
-)
+st.write("Esta aplicación utiliza YOLO para detectar objetos en imágenes capturadas con tu cámara.")
 st.text("Capturar imagen")
 
 img_file_buffer = st.camera_input("Take Photo")
 
 if img_file_buffer is not None:
-  if model is None:
-    st.error(
-        "El modelo no pudo ser cargado. Reinicia la aplicación en Streamlit."
+  image = Image.open(img_file_buffer)
+
+  with st.spinner("Procesando detección..."):
+    # Realizar inferencia aplicando los parámetros
+    results = model(
+        image, conf=confidence_threshold, iou=iou_threshold, max_det=max_detections
     )
-  else:
-    image = Image.open(img_file_buffer)
+    result = results[0]
 
-    model.conf = confidence_threshold
-    model.iou = iou_threshold
-    model.max_det = max_detections
+    # Generar la imagen anotada
+    annotated_array = result.plot()
+    annotated_image = Image.fromarray(
+        annotated_array[..., ::-1]
+    )  # Convertir BGR a RGB
 
-    with st.spinner("Procesando detección..."):
-      results = model(image)
-      results.render()
-      annotated_image = Image.fromarray(results.ims[0])
+  col1, col2 = st.columns([2, 1])
 
-    col1, col2 = st.columns([2, 1])
+  with col1:
+    st.image(
+        annotated_image,
+        caption="Imagen Procesada con Detecciones",
+        use_container_width=True,
+    )
 
-    with col1:
-      st.image(
-          annotated_image,
-          caption="Imagen Procesada con Detecciones",
-          use_container_width=True,
+  with col2:
+    st.subheader("Resultados de Detección")
+    boxes = result.boxes
+
+    if len(boxes) > 0:
+      st.success(f"¡Se encontraron {len(boxes)} objetos!")
+
+      # Extraer nombres y confianzas para mostrar en tabla
+      names_list = []
+      conf_list = []
+      for box in boxes:
+        cls_id = int(box.cls[0])
+        names_list.append(result.names[cls_id])
+        conf_list.append(float(box.conf[0]))
+
+      import pandas as pd
+
+      df_results = pd.DataFrame({"name": names_list, "confidence": conf_list})
+      st.dataframe(df_results, use_container_width=True)
+    else:
+      st.warning(
+          "No se detectaron objetos con los umbrales de confianza actuales."
       )
-
-    with col2:
-      st.subheader("Resultados de Detección")
-      df_results = results.pandas().xyxy[0]
-
-      if not df_results.empty:
-        st.success(f"¡Se encontraron {len(df_results)} objetos!")
-        st.dataframe(
-            df_results[["name", "confidence"]], use_container_width=True
-        )
-      else:
-        st.warning(
-            "No se detectaron objetos con los umbrales de confianza actuales."
-        )
