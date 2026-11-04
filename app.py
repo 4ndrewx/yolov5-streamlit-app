@@ -1,3 +1,5 @@
+import os
+import urllib.request
 import numpy as np
 from PIL import Image
 import streamlit as st
@@ -28,21 +30,28 @@ max_detections = st.sidebar.slider(
 )
 
 
-# Cargar modelo YOLOv5 con control de errores para evitar que se quede congelado
+# Cargar modelo de forma robusta descargando los pesos directamente
 @st.cache_resource
 def load_yolov5_model():
-  try:
-    # Intentar cargar desde torch.hub con un timeout implícito
-    model = torch.hub.load(
-        "ultralytics/yolov5", "yolov5s", pretrained=True, force_reload=False
-    )
-    return model
-  except Exception as e:
-    st.error(f"Error al cargar el modelo desde torch.hub: {e}")
-    return None
+  weight_file = "yolov5s.pt"
+  if not os.path.exists(weight_file):
+    url = "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt"
+    urllib.request.urlretrieve(url, weight_file)
+
+  # Cargar el modelo localmente con torch.hub apuntando al directorio actual
+  model = torch.hub.load(
+      "ultralytics/yolov5",
+      "custom",
+      path=weight_file,
+      source="github",
+      force_reload=False,
+  )
+  return model
 
 
-with st.spinner("Cargando modelo YOLOv5, por favor espera..."):
+with st.spinner(
+    "Cargando modelo YOLOv5 y pesos, por favor espera un momento..."
+):
   model = load_yolov5_model()
 
 # --- CONTENIDO PRINCIPAL ---
