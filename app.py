@@ -3,7 +3,7 @@ from PIL import Image
 import streamlit as st
 import torch
 
-# Configuración de la página en modo oscuro / ancho
+# Configuración de la página
 st.set_page_config(
     page_title="YOLOv5 Streamlit App",
     page_icon="📷",
@@ -28,16 +28,21 @@ max_detections = st.sidebar.slider(
 )
 
 
-# Cargar modelo YOLOv5 desde PyTorch Hub
+# Cargar modelo YOLOv5 con control de errores para evitar que se quede congelado
 @st.cache_resource
 def load_yolov5_model():
-  model = torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True)
-  return model
+  try:
+    # Intentar cargar desde torch.hub con un timeout implícito
+    model = torch.hub.load(
+        "ultralytics/yolov5", "yolov5s", pretrained=True, force_reload=False
+    )
+    return model
+  except Exception as e:
+    st.error(f"Error al cargar el modelo desde torch.hub: {e}")
+    return None
 
 
-with st.spinner(
-    "Cargando modelo YOLOv5... por favor espera un momento."
-):
+with st.spinner("Cargando modelo YOLOv5, por favor espera..."):
   model = load_yolov5_model()
 
 # --- CONTENIDO PRINCIPAL ---
@@ -47,39 +52,44 @@ st.write(
 )
 st.text("Capturar imagen")
 
-# Componente de la cámara
 img_file_buffer = st.camera_input("Take Photo")
 
 if img_file_buffer is not None:
-  image = Image.open(img_file_buffer)
-
-  # Aplicar parámetros
-  model.conf = confidence_threshold
-  model.iou = iou_threshold
-  model.max_det = max_detections
-
-  with st.spinner("Procesando detección..."):
-    results = model(image)
-    results.render()
-    annotated_image = Image.fromarray(results.ims[0])
-
-  col1, col2 = st.columns([2, 1])
-
-  with col1:
-    st.image(
-        annotated_image,
-        caption="Imagen Procesada con Detecciones",
-        use_container_width=True,
+  if model is None:
+    st.error(
+        "El modelo no pudo ser cargado. Reinicia la aplicación en Streamlit."
     )
+  else:
+    image = Image.open(img_file_buffer)
 
-  with col2:
-    st.subheader("Resultados de Detección")
-    df_results = results.pandas().xyxy[0]
+    model.conf = confidence_threshold
+    model.iou = iou_threshold
+    model.max_det = max_detections
 
-    if not df_results.empty:
-      st.success(f"¡Se encontraron {len(df_results)} objetos!")
-      st.dataframe(df_results[["name", "confidence"]], use_container_width=True)
-    else:
-      st.warning(
-          "No se detectaron objetos con los umbrales de confianza actuales."
+    with st.spinner("Procesando detección..."):
+      results = model(image)
+      results.render()
+      annotated_image = Image.fromarray(results.ims[0])
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+      st.image(
+          annotated_image,
+          caption="Imagen Procesada con Detecciones",
+          use_container_width=True,
       )
+
+    with col2:
+      st.subheader("Resultados de Detección")
+      df_results = results.pandas().xyxy[0]
+
+      if not df_results.empty:
+        st.success(f"¡Se encontraron {len(df_results)} objetos!")
+        st.dataframe(
+            df_results[["name", "confidence"]], use_container_width=True
+        )
+      else:
+        st.warning(
+            "No se detectaron objetos con los umbrales de confianza actuales."
+        )
